@@ -5,6 +5,8 @@ local playerCooldowns = {}
 local playerHeat = {}
 local playerStreak = {}
 local burnedCards = {}
+local clonedCards = {}
+local skimmers = {}
 
 local function now()
     return os.time()
@@ -14,8 +16,8 @@ local function notify(src, msg, typ)
     TriggerClientEvent('QBCore:Notify', src, msg, typ or 'primary')
 end
 
-local function randomCardId()
-    return ('CARD-%s-%04d'):format(os.time(), math.random(1000, 9999))
+local function cardFingerprint(cardInfo)
+    return ('%s|%s'):format(cardInfo.citizenid or 'unknown', cardInfo.cardNumber or cardInfo.masked or 'none')
 end
 
 local function countPoliceOnline()
@@ -47,72 +49,143 @@ local function findPlayerByCitizenId(citizenid)
     return nil
 end
 
-local function getStolenCards(player)
-    local cards = {}
-    local items = player.PlayerData.items or {}
+local function getPlayerCreditCardInfo(player)
+    local card = player.Functions.GetItemByName(Config.CreditCardItem)
+    if not card then return nil end
 
-    for slot, item in pairs(items) do
-        if item and item.name == Config.StolenCardItem and item.info and item.info.cardId then
-            local cardId = item.info.cardId
-            if not burnedCards[cardId] and not item.info.used then
-                cards[#cards + 1] = {
-                    slot = slot,
-                    cardId = cardId,
-                    holder = item.info.holder or 'unknown',
-                    bankName = item.info.bankName or 'LS Central',
-                    masked = item.info.masked or '**** **** **** ****',
-                    citizenid = item.info.citizenid
-                }
-            end
+    local info = card.info or {}
+    local char = player.PlayerData.charinfo or {}
+    local holder = (char.firstname and char.lastname) and (char.firstname .. ' ' .. char.lastname) or ('CID ' .. player.PlayerData.citizenid)
+    local rawNumber = tostring(info.cardNumber or info.number or info.ibannumber or math.random(1000000000000000, 9999999999999999))
+    local last4 = rawNumber:sub(-4)
+
+    return {
+        citizenid = player.PlayerData.citizenid,
+        holder = holder,
+        bankName = info.bankName or 'Pacific Banking Cluster',
+        cardNumber = rawNumber,
+        masked = ('**** **** **** %s'):format(last4),
+        pinHint = tostring(info.pinHint or (math.random(10, 99) .. 'X')),
+        source = player.PlayerData.source
+    }
+end
+
+local function getClonedCards(src)
+    clonedCards[src] = clonedCards[src] or {}
+
+    local valid = {}
+    for _, entry in ipairs(clonedCards[src]) do
+        if not burnedCards[entry.cardId] and not entry.used then
+            valid[#valid + 1] = entry
         end
     end
 
-    return cards
+    clonedCards[src] = valid
+    return valid
+end
+
+local function addClonedCard(src, cardInfo, method)
+    local list = getClonedCards(src)
+    local finger = cardFingerprint(cardInfo)
+
+    for _, entry in ipairs(list) do
+        if entry.fingerprint == finger then
+            return false
+        end
+    end
+
+    local cardId = ('CLONE-%s-%04d'):format(os.time(), math.random(1000, 9999))
+    list[#list + 1] = {
+        cardId = cardId,
+        fingerprint = finger,
+        holder = cardInfo.holder,
+        citizenid = cardInfo.citizenid,
+        bankName = cardInfo.bankName,
+        masked = cardInfo.masked,
+        cardNumber = cardInfo.cardNumber,
+        pinHint = cardInfo.pinHint,
+        acquiredBy = method,
+        acquiredAt = now(),
+        used = false
+    }
+
+    clonedCards[src] = list
+    return true
+end
+
+local function markCardUsed(src, cardId)
+    local cards = getClonedCards(src)
+    for _, card in ipairs(cards) do
+        if card.cardId == cardId then
+            card.used = true
+            if Config.CardMode.blockReuseGlobally then
+                burnedCards[cardId] = true
+            end
+            return true, card
+        end
+    end
+    return false, nil
+end
+
+local function getSkimmerKey(coords)
+    return ('%.2f|%.2f|%.2f'):format(coords.x, coords.y, coords.z)
+end
+
+local function distance(a, b)
+    local dx = a.x - b.x
+    local dy = a.y - b.y
+    local dz = a.z - b.z
+    return math.sqrt(dx * dx + dy * dy + dz * dz)
+end
+
+local function pruneSkimmers()
+    local t = now()
+    for key, skimmer in pairs(skimmers) do
+        if skimmer.expiresAt <= t then
+            skimmers[key] = nil
+        end
+    end
 end
 
 local function playerHasLaptop(player)
-    local laptopRule = Config.RequiredItems.laptop
-    if not laptopRule then return true end
-
-    local item = player.Functions.GetItemByName(laptopRule.name)
-    return item ~= nil
+    local rule = Config.RequiredItems.laptop
+    if not rule then return true end
+    return player.Functions.GetItemByName(rule.name) ~= nil
 end
 
 local function playerHasExploit(player)
-    local exploitRule = Config.RequiredItems.exploit
-    if not exploitRule then return true end
-
-    local item = player.Functions.GetItemByName(exploitRule.name)
-    return item ~= nil
+    local rule = Config.RequiredItems.exploit
+    if not rule then return true end
+    return player.Functions.GetItemByName(rule.name) ~= nil
 end
 
 local function burnExploit(src, player)
-    local exploitRule = Config.RequiredItems.exploit
-    if not exploitRule or not exploitRule.removeOnUse then return end
+    local rule = Config.RequiredItems.exploit
+    if not rule or not rule.removeOnUse then return end
 
-    player.Functions.RemoveItem(exploitRule.name, 1)
-
-    local shared = QBCore.Shared.Items[exploitRule.name]
+    player.Functions.RemoveItem(rule.name, 1)
+    local shared = QBCore.Shared.Items[rule.name]
     if shared then
         TriggerClientEvent('inventory:client:ItemBox', src, shared, 'remove')
     end
 end
 
-local function consumeStolenCard(src, player, cardId)
-    local items = player.PlayerData.items or {}
+local function burnSkimmerItem(src, player)
+    local rule = Config.RequiredItems.skimmer
+    if not rule or not rule.removeOnUse then return true end
 
-    for slot, item in pairs(items) do
-        if item and item.name == Config.StolenCardItem and item.info and item.info.cardId == cardId then
-            player.Functions.RemoveItem(Config.StolenCardItem, 1, slot)
-            local shared = QBCore.Shared.Items[Config.StolenCardItem]
-            if shared then
-                TriggerClientEvent('inventory:client:ItemBox', src, shared, 'remove')
-            end
-            return true, item.info
-        end
+    local item = player.Functions.GetItemByName(rule.name)
+    if not item then
+        return false
     end
 
-    return false, nil
+    player.Functions.RemoveItem(rule.name, 1)
+    local shared = QBCore.Shared.Items[rule.name]
+    if shared then
+        TriggerClientEvent('inventory:client:ItemBox', src, shared, 'remove')
+    end
+
+    return true
 end
 
 local function broadcastPoliceAlert(coords)
@@ -144,9 +217,7 @@ local function payout(src, player, amount, meta)
             exports['qs-banking']:AddMoney(src, amount, Config.Economy.qsStatement)
         end)
 
-        if ok then
-            return true
-        end
+        if ok then return true end
 
         player.Functions.AddMoney(Config.Economy.qbMoneyType, amount, 'atm-hack-fallback')
         return false
@@ -192,9 +263,7 @@ local function computeATMReward(src, player, tier, trace, elapsed, stageReached)
 end
 
 local function computeCardReward(src, player, cardInfo, tier, trace, elapsed, stageReached)
-    local fallbackMin = Config.CardMode.fallbackReward.min
-    local fallbackMax = Config.CardMode.fallbackReward.max
-    local reward = math.random(fallbackMin, fallbackMax)
+    local reward = math.random(Config.CardMode.fallbackReward.min, Config.CardMode.fallbackReward.max)
 
     if cardInfo and cardInfo.citizenid then
         local victim = findPlayerByCitizenId(cardInfo.citizenid)
@@ -208,7 +277,7 @@ local function computeCardReward(src, player, cardInfo, tier, trace, elapsed, st
             if drain > 0 then
                 victim.Functions.RemoveMoney('bank', drain, 'card-compromise-atm')
                 reward = drain
-                notify(victim.PlayerData.source, ('Your bank card ending %s was compromised. $%s withdrawn.'):format((cardInfo.masked or '****'):sub(-4), drain), 'error')
+                notify(victim.PlayerData.source, ('Your card ending %s was skimmed and used. $%s withdrawn.'):format((cardInfo.masked or '****'):sub(-4), drain), 'error')
             end
         end
     end
@@ -224,12 +293,11 @@ local function computeCardReward(src, player, cardInfo, tier, trace, elapsed, st
     notify(src, ('Card intrusion successful. You siphoned $%s.'):format(reward), 'success')
 end
 
-QBCore.Functions.CreateUseableItem(Config.RequiredItems.laptop.name, function(source, item)
+QBCore.Functions.CreateUseableItem(Config.RequiredItems.laptop.name, function(source)
     local player = QBCore.Functions.GetPlayer(source)
     if not player then return end
 
-    local hasLaptop = player.Functions.GetItemByName(Config.RequiredItems.laptop.name)
-    if not hasLaptop then
+    if not playerHasLaptop(player) then
         notify(source, ('You need a %s to start intrusion.'):format(Config.RequiredItems.laptop.name), 'error')
         return
     end
@@ -237,47 +305,73 @@ QBCore.Functions.CreateUseableItem(Config.RequiredItems.laptop.name, function(so
     TriggerClientEvent('atmhack:client:useLaptop', source)
 end)
 
-RegisterNetEvent('atmhack:server:stealCardFromPlayer', function(targetId)
+QBCore.Functions.CreateUseableItem(Config.RequiredItems.skimmer.name, function(source)
+    TriggerClientEvent('atmhack:client:useSkimmer', source)
+end)
+
+RegisterNetEvent('atmhack:server:installSkimmer', function(coords)
     local src = source
-    local thief = QBCore.Functions.GetPlayer(src)
-    local target = QBCore.Functions.GetPlayer(tonumber(targetId))
+    local player = QBCore.Functions.GetPlayer(src)
+    if not player then return end
 
-    if not thief or not target then
-        notify(src, 'No valid target detected for card theft.', 'error')
+    pruneSkimmers()
+
+    local owned = 0
+    for _, skimmer in pairs(skimmers) do
+        if skimmer.owner == src then
+            owned = owned + 1
+        end
+    end
+
+    if owned >= Config.SkimmerMaxPerPlayer then
+        notify(src, ('Skimmer limit reached (%s).'):format(Config.SkimmerMaxPerPlayer), 'error')
         return
     end
 
-    if src == tonumber(targetId) then
-        notify(src, 'You cannot steal your own card.', 'error')
+    if not burnSkimmerItem(src, player) then
+        notify(src, ('Missing skimmer hardware: %s'):format(Config.RequiredItems.skimmer.name), 'error')
         return
     end
 
-    local cardId = randomCardId()
-    local holder = (target.PlayerData.charinfo and (target.PlayerData.charinfo.firstname .. ' ' .. target.PlayerData.charinfo.lastname)) or ('CID ' .. target.PlayerData.citizenid)
-    local masked = ('%s%s%s%s'):format('**** **** **** ', tostring(math.random(1000, 9999)))
-
-    local info = {
-        cardId = cardId,
-        holder = holder,
-        citizenid = target.PlayerData.citizenid,
-        bankName = 'Pacific Banking Cluster',
-        masked = masked,
-        pinHint = tostring(math.random(10, 99)) .. 'X'
+    local key = getSkimmerKey(coords)
+    skimmers[key] = {
+        owner = src,
+        ownerCid = player.PlayerData.citizenid,
+        coords = coords,
+        createdAt = now(),
+        expiresAt = now() + (Config.SkimmerDurationMinutes * 60),
+        captures = {}
     }
 
-    local added = thief.Functions.AddItem(Config.StolenCardItem, 1, false, info)
-    if not added then
-        notify(src, 'You could not stash the stolen card (inventory full).', 'error')
-        return
-    end
+    notify(src, ('Skimmer installed. Live for %s minutes.'):format(Config.SkimmerDurationMinutes), 'success')
+end)
 
-    local shared = QBCore.Shared.Items[Config.StolenCardItem]
-    if shared then
-        TriggerClientEvent('inventory:client:ItemBox', src, shared, 'add')
-    end
+RegisterNetEvent('atmhack:server:atmProbe', function(playerCoords)
+    local src = source
+    local player = QBCore.Functions.GetPlayer(src)
+    if not player then return end
 
-    notify(src, ('You lifted a cloned card from %s.'):format(holder), 'success')
-    notify(target.PlayerData.source, 'You feel your wallet lighter... your card may be compromised.', 'error')
+    pruneSkimmers()
+
+    local cardInfo = getPlayerCreditCardInfo(player)
+    if not cardInfo then return end
+
+    local t = now()
+
+    for _, skimmer in pairs(skimmers) do
+        if skimmer.owner ~= src and distance(playerCoords, skimmer.coords) <= Config.SkimDistance then
+            local victimKey = player.PlayerData.citizenid
+            local lastCaptured = skimmer.captures[victimKey] or 0
+            if (t - lastCaptured) >= Config.SkimmerCaptureCooldown then
+                skimmer.captures[victimKey] = t
+                local added = addClonedCard(skimmer.owner, cardInfo, 'skimmer')
+
+                if added then
+                    notify(skimmer.owner, ('Skimmer captured card data: %s (%s).'):format(cardInfo.holder, cardInfo.masked), 'success')
+                end
+            end
+        end
+    end
 end)
 
 RegisterNetEvent('atmhack:server:requestStart', function()
@@ -311,10 +405,10 @@ RegisterNetEvent('atmhack:server:requestStart', function()
     local heat = playerHeat[src] or 0
     local streak = playerStreak[src] or 0
     local difficultyBias = math.min(35, (heat * 4) + (streak * 2))
-    local stolenCards = getStolenCards(player)
+    local cards = getClonedCards(src)
     local hasExploit = playerHasExploit(player)
 
-    if not hasExploit and (#stolenCards == 0 or not Config.CardMode.enabled) then
+    if not hasExploit and (#cards == 0 or not Config.CardMode.enabled) then
         notify(src, ('Missing required exploit drive: %s'):format(Config.RequiredItems.exploit.name), 'error')
         return
     end
@@ -325,7 +419,7 @@ RegisterNetEvent('atmhack:server:requestStart', function()
         difficultyBias = difficultyBias,
         economyMode = Config.Economy.mode,
         cardModeEnabled = Config.CardMode.enabled,
-        stolenCards = stolenCards,
+        stolenCards = cards,
         hasExploit = hasExploit
     })
 end)
@@ -353,41 +447,23 @@ RegisterNetEvent('atmhack:server:finish', function(success, data)
 
     if success then
         if mode == 'card' and Config.CardMode.enabled then
-            local cards = getStolenCards(player)
-            local cardInfo
-            for _, card in ipairs(cards) do
-                if card.cardId == cardId then
-                    cardInfo = card
-                    break
-                end
-            end
-
-            if not cardInfo then
-                notify(src, 'Invalid or expired stolen card selected.', 'error')
+            local marked, cardInfo = markCardUsed(src, cardId)
+            if not marked then
+                notify(src, 'Invalid or expired cloned card selected.', 'error')
                 success = false
             else
-                local removed, rawInfo = consumeStolenCard(src, player, cardId)
-                if not removed then
-                    notify(src, 'Card could not be consumed; intrusion rejected.', 'error')
-                    success = false
-                else
-                    if Config.CardMode.requireExploitItem then
-                        if not playerHasExploit(player) then
-                            notify(src, ('Missing required exploit drive: %s'):format(Config.RequiredItems.exploit.name), 'error')
-                            success = false
-                        else
-                            burnExploit(src, player)
-                        end
+                if Config.CardMode.requireExploitItem then
+                    if not playerHasExploit(player) then
+                        notify(src, ('Missing required exploit drive: %s'):format(Config.RequiredItems.exploit.name), 'error')
+                        success = false
+                    else
+                        burnExploit(src, player)
                     end
+                end
 
-                    if Config.CardMode.blockReuseGlobally then
-                        burnedCards[cardId] = true
-                    end
-
-                    if success then
-                        computeCardReward(src, player, rawInfo, tier, trace, elapsed, stageReached)
-                        playerHeat[src] = math.min(12, heat + tier)
-                    end
+                if success then
+                    computeCardReward(src, player, cardInfo, tier, trace, elapsed, stageReached)
+                    playerHeat[src] = math.min(12, heat + tier)
                 end
             end
         else
@@ -409,10 +485,7 @@ RegisterNetEvent('atmhack:server:finish', function(success, data)
         playerHeat[src] = math.max(0, heat - 1)
 
         if mode == 'card' and cardId and Config.CardMode.consumeOnAttempt then
-            local removed = consumeStolenCard(src, player, cardId)
-            if removed and Config.CardMode.blockReuseGlobally then
-                burnedCards[cardId] = true
-            end
+            markCardUsed(src, cardId)
         end
 
         notify(src, 'Hack failed. Security trace escalated.', 'error')
@@ -420,7 +493,6 @@ RegisterNetEvent('atmhack:server:finish', function(success, data)
     end
 
     globalCooldownUntil = now() + Config.GlobalCooldown
-
     TriggerClientEvent('hud:client:UpdateStress', src, success and Config.SuccessStress or Config.FailStress)
 end)
 
@@ -429,4 +501,5 @@ AddEventHandler('playerDropped', function()
     playerCooldowns[src] = nil
     playerHeat[src] = nil
     playerStreak[src] = nil
+    clonedCards[src] = nil
 end)

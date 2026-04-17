@@ -11,11 +11,18 @@ Config.RequiredItems = {
     exploit = {
         name = 'trojan_usb',
         removeOnUse = true
+    },
+    skimmer = {
+        name = 'atm_skimmer',
+        removeOnUse = true
     }
 }
 
-Config.StolenCardItem = 'stolen_bank_card'
-Config.StealDistance = 2.0
+Config.CreditCardItem = 'bank_card'
+Config.SkimDistance = 1.8
+Config.SkimmerDurationMinutes = 60
+Config.SkimmerCaptureCooldown = 90 -- seconds per victim per skimmer
+Config.SkimmerMaxPerPlayer = 4
 
 Config.CardMode = {
     enabled = true,
@@ -78,5 +85,6 @@ Config.UniqueFeatures = {
     RewardStreak = true,
     QSBankingAdapter = true,
     LaptopDeploySequence = true,
-    PlayerCardCompromiseMode = true
+    PlayerCardCompromiseMode = true,
+    ATMPhysicalSkimmers = true
 }

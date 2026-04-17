@@ -4,7 +4,8 @@ local state = {
     hacking = false,
     activeATM = nil,
     laptopObj = nil,
-    startedAt = 0
+    startedAt = 0,
+    lastProbe = 0
 }
 
 local function notify(msg, typ)
@@ -38,30 +39,6 @@ local function getClosestATM()
     end
 
     return nil, 999.0
-end
-
-local function getClosestPlayer(maxDistance)
-    local myPed = PlayerPedId()
-    local myCoords = GetEntityCoords(myPed)
-    local closestPlayer, closestDist
-
-    for _, player in ipairs(GetActivePlayers()) do
-        if player ~= PlayerId() then
-            local ped = GetPlayerPed(player)
-            local coords = GetEntityCoords(ped)
-            local dist = #(coords - myCoords)
-            if not closestDist or dist < closestDist then
-                closestDist = dist
-                closestPlayer = player
-            end
-        end
-    end
-
-    if closestPlayer and closestDist and closestDist <= maxDistance then
-        return GetPlayerServerId(closestPlayer), closestDist
-    end
-
-    return nil, nil
 end
 
 local function setNui(enabled, payload)
@@ -173,22 +150,6 @@ RegisterNetEvent('atmhack:client:start', function(payload)
     })
 end)
 
-RegisterNetEvent('atmhack:client:policeAlert', function(coords)
-    local blip = AddBlipForCoord(coords.x, coords.y, coords.z)
-    SetBlipSprite(blip, 161)
-    SetBlipScale(blip, 1.0)
-    SetBlipColour(blip, 1)
-    SetBlipFlashes(blip, true)
-    BeginTextCommandSetBlipName('STRING')
-    AddTextComponentSubstringPlayerName('ATM Intrusion')
-    EndTextCommandSetBlipName(blip)
-
-    notify('Dispatch: ATM intrusion signatures detected.', 'error')
-
-    Wait(30000)
-    RemoveBlip(blip)
-end)
-
 RegisterNetEvent('atmhack:client:useLaptop', function()
     if state.hacking then
         notify('Exploit already running.', 'error')
@@ -209,15 +170,36 @@ RegisterNetEvent('atmhack:client:useLaptop', function()
     TriggerServerEvent('atmhack:server:requestStart')
 end)
 
-RegisterCommand('stealcard', function()
-    local targetId = getClosestPlayer(Config.StealDistance)
-    if not targetId then
-        notify('No nearby player to swipe card from.', 'error')
+RegisterNetEvent('atmhack:client:useSkimmer', function()
+    local atm = getClosestATM()
+    if not atm then
+        notify('You must be next to an ATM to install skimmer hardware.', 'error')
         return
     end
 
-    TriggerServerEvent('atmhack:server:stealCardFromPlayer', targetId)
-end, false)
+    local coords = GetEntityCoords(atm)
+    TriggerServerEvent('atmhack:server:installSkimmer', {
+        x = coords.x,
+        y = coords.y,
+        z = coords.z
+    })
+end)
+
+RegisterNetEvent('atmhack:client:policeAlert', function(coords)
+    local blip = AddBlipForCoord(coords.x, coords.y, coords.z)
+    SetBlipSprite(blip, 161)
+    SetBlipScale(blip, 1.0)
+    SetBlipColour(blip, 1)
+    SetBlipFlashes(blip, true)
+    BeginTextCommandSetBlipName('STRING')
+    AddTextComponentSubstringPlayerName('ATM Intrusion')
+    EndTextCommandSetBlipName(blip)
+
+    notify('Dispatch: ATM intrusion signatures detected.', 'error')
+
+    Wait(30000)
+    RemoveBlip(blip)
+end)
 
 CreateThread(function()
     while true do
@@ -236,7 +218,33 @@ CreateThread(function()
             DisableControlAction(0, 23, true)
             Wait(0)
         else
-            Wait(300)
+            Wait(250)
         end
+    end
+end)
+
+CreateThread(function()
+    while true do
+        Wait(2000)
+
+        if state.hacking then
+            goto continue
+        end
+
+        local atm = getClosestATM()
+        if atm then
+            local now = GetGameTimer()
+            if now - state.lastProbe > 20000 then
+                state.lastProbe = now
+                local coords = GetEntityCoords(PlayerPedId())
+                TriggerServerEvent('atmhack:server:atmProbe', {
+                    x = coords.x,
+                    y = coords.y,
+                    z = coords.z
+                })
+            end
+        end
+
+        ::continue::
     end
 end)
