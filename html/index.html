@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ATM Intrusion Suite</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app" class="hidden">
+    <div class="scanlines"></div>
+
+    <header>
+      <div>
+        <h1>VANTA / ATM INTRUSION</h1>
+        <p class="subtitle">quantum-shell exploitation console</p>
+      </div>
+      <div class="status">
+        <div class="chip">Tier <span id="tierValue">1</span></div>
+        <div class="chip">Heat <span id="heatValue">0</span></div>
+        <div class="chip timer">Time <span id="timeValue">95</span>s</div>
+      </div>
+    </header>
+
+    <section class="preflight">
+      <div class="preflight-grid">
+        <div>
+          <div class="mode-title">Risk Profile</div>
+          <div id="tierPicker" class="tier-picker">
+            <button data-tier="1" class="tier active">Ghost</button>
+            <button data-tier="2" class="tier">Balanced</button>
+            <button data-tier="3" class="tier">Overclock</button>
+          </div>
+        </div>
+        <div>
+          <div class="mode-title">Exploit Source</div>
+          <div id="sourcePicker" class="tier-picker">
+            <button data-source="atm" class="tier active">ATM Bus</button>
+            <button data-source="card" class="tier">Stolen Card</button>
+          </div>
+          <select id="cardSelect" class="card-select hidden"></select>
+        </div>
+      </div>
+      <div id="modeDescription" class="hint">Ghost: easier puzzles, lower payout multiplier.</div>
+      <div id="sourceDescription" class="hint">ATM Bus: direct intrusion against the ATM host bank.</div>
+    </section>
+
+    <section id="stageSequence" class="stage active">
+      <h2>Stage 1 / Pattern Injection</h2>
+      <p>Memorize and replay the pulse sequence from memory.</p>
+      <div id="sequenceGrid" class="grid"></div>
+      <button id="replayBtn" class="action">Replay Sequence</button>
+    </section>
+
+    <section id="stageWires" class="stage">
+      <h2>Stage 2 / Circuit Bypass</h2>
+      <p>Cut only the safe wires in order to maintain stealth.</p>
+      <div id="wireRack" class="wire-rack"></div>
+      <div id="wireHint" class="hint"></div>
+    </section>
+
+    <section id="stageCode" class="stage">
+      <h2>Stage 3 / Cipher Bruteforce</h2>
+      <p>Crack the 4-digit auth key. Hints give exact and nearby digits.</p>
+      <div class="guess-box">
+        <input id="codeInput" maxlength="4" inputmode="numeric" placeholder="----" />
+        <button id="guessBtn" class="action">Inject</button>
+      </div>
+      <div id="guessLog" class="log"></div>
+    </section>
+
+    <aside class="telemetry">
+      <div class="telemetry-row">
+        <span>Trace Level</span>
+        <div class="bar"><div id="traceBar"></div></div>
+        <strong id="traceValue">0%</strong>
+      </div>
+      <div class="telemetry-row">
+        <span>Stealth Integrity</span>
+        <div class="bar"><div id="stealthBar"></div></div>
+        <strong id="stealthValue">100%</strong>
+      </div>
+      <div class="telemetry-row">
+        <span>Node Access</span>
+        <div class="bar"><div id="nodeBar"></div></div>
+        <strong id="nodeValue">0/3</strong>
+      </div>
+    </aside>
+
+    <footer>
+      <div id="feedback">Booting exploit runtime and syncing laptop tunnel...</div>
+      <button id="abortBtn" class="abort">Abort [ESC]</button>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
